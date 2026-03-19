@@ -70,7 +70,7 @@ const Sidebar = ({ conversations, activeId, onSelect, onNewChat, isOpen }) => {
                 <div className="sidebar-footer">
                     <div className="powered-by">
                         <span>Powered by</span>
-                        <span className="gradient-text">Spring AI</span>
+                        <span className="gradient-text">Python/FastAPI</span>
                     </div>
                 </div>
             </div>

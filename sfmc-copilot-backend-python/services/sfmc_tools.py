@@ -45,13 +45,15 @@ def create_data_extension(
 
 
 @tool
-def list_data_extensions() -> str:
-    """Lists all Data Extensions in the user's SFMC account.
+def search_data_extension(search_key: str) -> str:
+    """Search the Data Extension in the user's SFMC account.
 
-    Use this tool when the user asks to list, show, view, or check their Data Extensions.
+    Use this tool when the user asks to search for a Data Extension or you want to get the details such as DE external Key.
+    Args:
+        search_key: Name of the Data extension to search for (e.g. "Customer_Profiles")
     """
-    logger.info("Tool called: list_data_extensions()")
-    return sfmc_api_service.list_data_extensions()
+    logger.info("Tool called: search_data_extension(search_key=%s)", search_key)
+    return sfmc_api_service.search_data_extension(search_key)
 
 
 @tool
@@ -69,7 +71,14 @@ def create_email_definition(name: str, subject: str) -> str:
 
 
 @tool
-def create_automation(name: str, description: str, schedule_frequency: str) -> str:
+def create_automation(
+    name: str, 
+    description: str, 
+    start_source: str = "Scheduled",
+    schedule_frequency: str = "", 
+    file_naming_pattern: str = "",
+    query_id: str = ""
+) -> str:
     """Creates an Automation in Salesforce Marketing Cloud Automation Studio.
 
     Use this tool when the user asks to create, set up, or build an automation.
@@ -77,10 +86,20 @@ def create_automation(name: str, description: str, schedule_frequency: str) -> s
     Args:
         name: Name of the automation (e.g. "Daily_Import")
         description: Description of what the automation does
-        schedule_frequency: One of "Hourly", "Daily", "Weekly", "Monthly"
+        start_source: The trigger type. Must be either 'Scheduled' or 'FileDrop'.
+        schedule_frequency: (Only for Scheduled) One of "Hourly", "Daily", "Weekly", "Monthly"
+        file_naming_pattern: (Only for FileDrop) The filename pattern to watch for (e.g. "imports_*.csv")
+        query_id: (Optional) Pass the Query ID returned by create_sql_query to attach it to this automation as a step.
     """
-    logger.info("Tool called: create_automation(name=%s)", name)
-    return sfmc_api_service.create_automation(name, description, schedule_frequency)
+    logger.info("Tool called: create_automation(name=%s, source=%s, query_id=%s)", name, start_source, query_id)
+    return sfmc_api_service.create_automation(
+        name=name,
+        description=description,
+        start_source=start_source,
+        schedule_frequency=schedule_frequency,
+        file_naming_pattern=file_naming_pattern,
+        query_id=query_id or None
+    )
 
 
 @tool
@@ -94,11 +113,42 @@ def get_subscriber_count() -> str:
     return sfmc_api_service.get_subscriber_count()
 
 
+@tool
+def create_sql_query(
+    name: str,
+    query_text: str,
+    target_data_extension_key: str,
+    description: str = "",
+    update_type: str = "Overwrite",
+) -> str:
+    """Creates an SQL Query Activity in Salesforce Marketing Cloud.
+
+    Use this tool when the user asks to create an SQL query or write SQL for SFMC.
+    You must generate the appropriate SQL query and pass it to this tool.
+    
+    Args:
+        name: Name of the query activity (e.g. "Weekly_Active_Users_Query")
+        query_text: The actual SQL SELECT statement to execute
+        target_data_extension_key: The CustomerKey of the destination Data Extension to save results to
+        description: Description of what the query does
+        update_type: How to write the data, one of "Append", "Update", or "Overwrite" (default is "Overwrite")
+    """
+    logger.info("Tool called: create_sql_query(name=%s)", name)
+    return sfmc_api_service.create_sql_query_activity(
+        name=name,
+        query_text=query_text,
+        target_de_key=target_data_extension_key,
+        description=description,
+        update_type=update_type,
+    )
+
+
 # All tools to register with the Agent
 ALL_TOOLS = [
     create_data_extension,
-    list_data_extensions,
+    search_data_extension,
     create_email_definition,
     create_automation,
     get_subscriber_count,
+    create_sql_query,
 ]

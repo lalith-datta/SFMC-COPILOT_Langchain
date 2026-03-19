@@ -5,7 +5,9 @@ Uses ChatGoogleGenerativeAI with bound SFMC tools. The agent automatically
 decides when to call tools based on the user's message — no manual intent
 detection or keyword matching needed.
 
-Conversation history is managed by LangChain's ChatMessageHistory.
+Conversation history is automatically managed by LangGraph's MemorySaver
+checkpointer — messages are persisted per conversation thread with no manual
+save/load code required.
 """
 
 from __future__ import annotations
@@ -13,11 +15,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from langchain_core.chat_history import InMemoryChatMessageHistory
-from langchain_core.messages import HumanMessage
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.prebuilt import create_react_agent
 
 from config import settings
@@ -38,6 +37,7 @@ Your capabilities (via tools):
 - Create Data Extensions with custom fields, types, and sendable configurations
 - List existing Data Extensions
 - Create Email Definitions in Content Builder
+- Create SQL Query Activities by writing and deploying SQL
 - Create Automations with schedules
 - Query subscriber count and metrics
 
@@ -46,9 +46,10 @@ Guidelines:
 2. Format responses with markdown for readability (tables, bold, lists).
 3. When reporting tool results, present them clearly. The action has ALREADY been executed.
 4. Provide field-level details when describing Data Extensions (name, type, required, primary key).
-5. For automations, specify the schedule and steps clearly.
-6. Always be helpful, professional, and concise.
-7. If a request is ambiguous, ask clarifying questions BEFORE calling a tool.
+5. For automations, specify the schedule and steps clearly. If the user asks for a File Drop trigger, explicitly pass `start_source="FileDrop"` and extract the file naming pattern.
+6. When asked to schedule a query, FIRST use create_sql_query to get the Query ID and while creating the SQL query you would need the External key of the Target Data extension for that run the tool search_data_extension passing the name of the Data extension provided by the user to get the external key of the target data extension, THEN use create_automation passing that Query ID.
+7. Always be helpful, professional, and concise.
+8. If a request is ambiguous, ask clarifying questions BEFORE calling a tool.
 """
 
 
@@ -60,22 +61,16 @@ class RoutingResult:
     model: str
 
 
-# ==================== SESSION MEMORY ====================
-
-_session_store: dict[str, InMemoryChatMessageHistory] = {}
-
-
-def _get_session_history(session_id: str) -> InMemoryChatMessageHistory:
-    """Get or create a chat history for the given session."""
-    if session_id not in _session_store:
-        _session_store[session_id] = InMemoryChatMessageHistory()
-    return _session_store[session_id]
-
-
 # ==================== AGENT SETUP ====================
 
+# Conversation memory — automatically persists all messages per thread_id.
+# Each conversation gets its own thread, so multi-turn context is preserved
+# without any manual message tracking.
+_memory = MemorySaver()
+
+
 def _create_agent():
-    """Create the LangChain agent with Gemini + SFMC tools."""
+    """Create the LangChain agent with Gemini + SFMC tools + conversation memory."""
     if not settings.gemini_api_key:
         logger.warning("GEMINI_API_KEY not set — agent will fail on requests")
         return None
@@ -87,15 +82,18 @@ def _create_agent():
         max_output_tokens=2048,
     )
 
-    # Create a ReAct agent with tools
+    # Create a ReAct agent with tools and memory checkpointer.
+    # The checkpointer automatically saves and restores conversation history
+    # for each thread_id — no manual history management needed.
     agent = create_react_agent(
         model=llm,
         tools=ALL_TOOLS,
         prompt=SYSTEM_PROMPT,
+        checkpointer=_memory,
     )
 
     logger.info(
-        "LangChain Agent created: model=%s, tools=%s",
+        "LangChain Agent created with conversational memory: model=%s, tools=%s",
         settings.gemini_model,
         [t.name for t in ALL_TOOLS],
     )
@@ -128,22 +126,21 @@ class AiGatewayService:
             )
 
         try:
-            logger.info("Invoking agent for conversation=%s", conversation_id)
+            thread_id = conversation_id or "default"
+            logger.info("Invoking agent for thread=%s", thread_id)
 
-            # Get session history
-            history = _get_session_history(conversation_id or "default")
-
-            # Invoke the agent with message history
+            # The agent + checkpointer handles everything:
+            # - Loads previous messages for this thread_id automatically
+            # - Appends the new user message
+            # - Runs the agent (with tool calls if needed)
+            # - Saves all messages (user + AI + tool) back to the checkpoint
             result = agent.invoke(
-                {"messages": [*history.messages, HumanMessage(content=message)]},
+                {"messages": [("user", message)]},
+                config={"configurable": {"thread_id": thread_id}},
             )
 
             # Extract the final response text
             response_text = self._extract_response_text(result)
-
-            # Save to history
-            history.add_user_message(message)
-            history.add_ai_message(response_text)
 
             logger.info("Agent response generated (%d chars)", len(response_text))
             return RoutingResult(text=response_text, model="gemini")

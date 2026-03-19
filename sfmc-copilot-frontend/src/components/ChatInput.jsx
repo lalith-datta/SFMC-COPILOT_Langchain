@@ -69,7 +69,7 @@ const ChatInput = ({ onSend, disabled }) => {
                     </button>
                 </div>
                 <p className="input-hint">
-                    SFMC Copilot uses <span className="hint-model">Gemini</span> &amp; <span className="hint-model">Ollama</span> via Spring AI.
+                    SFMC Copilot uses <span className="hint-model">Gemini </span> 
                     Press <kbd>Enter</kbd> to send, <kbd>Shift+Enter</kbd> for new line.
                 </p>
             </form>

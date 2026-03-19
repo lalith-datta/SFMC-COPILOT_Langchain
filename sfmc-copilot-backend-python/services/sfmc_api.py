@@ -11,6 +11,7 @@ Handles actual API calls to Salesforce Marketing Cloud for:
 import logging
 
 import httpx
+import json
 
 from config import settings
 from services.sfmc_auth import sfmc_auth_service
@@ -162,16 +163,20 @@ class SfmcApiService:
 
     # ==================== LIST DATA EXTENSIONS ====================
 
-    def list_data_extensions(self) -> str:
-        """List all Data Extensions in the SFMC account."""
+    def search_data_extension(self, search_key: str) -> str:
+        """Search for a Data Extension in the SFMC account."""
         try:
             url = f"{self._base_uri()}/data/v1/customobjects"
             logger.info("Calling SFMC list DEs API: %s", url)
-            response = self._call_sfmc_api(url, params={"$pageSize": "50", "$search": "*"})
-            return f"📊 **Your Data Extensions:**\n\n{response}"
+            response = self._call_sfmc_api(url, params={"$pageSize": "1","$page": "1", "$search": search_key})
+            # logger.info("Found Data Extension '%s' successfully", response)
+            # logger.info(type(response))
+            payload = json.loads(response)
+            External_key = payload["items"][0]["key"]
+            return External_key
         except Exception as e:
-            logger.error("Failed to list Data Extensions: %s", e)
-            return f"❌ Failed to list Data Extensions: {e}"
+            logger.error("Unable to find Data Extension: %s", e)
+            return f"❌ Unable to find Data Extension: {e}"
 
     # ==================== EMAIL ====================
 
@@ -194,18 +199,115 @@ class SfmcApiService:
             logger.error("Failed to create Email Definition '%s': %s", name, e)
             return f"❌ Failed to create Email Definition '{name}': {e}"
 
+    # ==================== SQL QUERY ACTIVITIES ====================
+    DEFAULT_SQL_QUERY_CATEGORY_ID = 70556
+    def create_sql_query_activity(
+        self, name: str, query_text: str, target_de_key: str, description: str = "", update_type: str = "Overwrite"
+    ) -> str:
+        """Create an SQL Query Activity in SFMC."""
+        try:
+            url = f"{self._base_uri()}/automation/v1/queries"
+            
+            # Map update type string to SFMC ID: 0=Append, 1=Update, 2=Overwrite
+            update_type_map = {"overwrite": 0, "update": 1, "append": 2}
+            update_id = update_type_map.get(update_type.lower(), 0)
+
+            payload = {
+                "name": name,
+                "key": name.replace(" ", "_"),
+                "description": description,
+                "queryText": query_text,
+                "targetKey": target_de_key,
+                "targetUpdateTypeId": update_id,
+                "categoryId": self.DEFAULT_SQL_QUERY_CATEGORY_ID
+            }
+
+            response = self._call_sfmc_api(url, method="POST", body=payload)
+            logger.info("Created SQL Query Activity '%s' successfully", name)
+            
+            # Extract queryId from response if available (useful for chaining)
+            import json
+            try:
+                resp_data = json.loads(response)
+                query_id = resp_data.get("queryDefinitionId", "unknown_id")
+                return f"✅ SQL Query Activity '{name}' created successfully!\nQuery ID: `{query_id}`\n\nDetails:\n{response}"
+            except Exception:
+                return f"✅ SQL Query Activity '{name}' created successfully!\n\nDetails:\n{response}"
+
+        except Exception as e:
+            logger.error("Failed to create SQL Query Activity '%s': %s", name, e)
+            return f"❌ Failed to create SQL Query Activity '{name}': {e}"
+
     # ==================== AUTOMATIONS ====================
 
-    def create_automation(self, name: str, description: str, schedule_frequency: str) -> str:
-        """Create an automation in SFMC."""
+    def create_automation(
+        self, 
+        name: str, 
+        description: str, 
+        start_source: str = "Scheduled", 
+        schedule_frequency: str = "", 
+        file_naming_pattern: str = "",
+        query_id: str | None = None
+    ) -> str:
+        """Create an automation in SFMC with an optional SQL query step."""
         try:
             url = f"{self._base_uri()}/automation/v1/automations"
             payload = {
                 "name": name,
                 "description": description,
-                "type": "scheduled",
-                "schedule": {"scheduleType": schedule_frequency},
             }
+
+            if start_source.lower() == "filedrop":
+                payload["type"] = "triggered"
+                # For now, leaving folderLocationId unconfigured per user request. 
+                # SFMC may require it for a fully valid File Drop setup.
+                payload["fileTrigger"] = {
+                    "fileNamingPattern": file_naming_pattern or f"{name}_%%Year%%%%Month%%%%Day%%.csv",
+                    "isPublished": True
+                }
+            else:
+                # Map simple frequency to iCal Recur string
+                freq_map = {
+                    "hourly": "FREQ=HOURLY;INTERVAL=1",
+                    "daily": "FREQ=DAILY;INTERVAL=1",
+                    "weekly": "FREQ=WEEKLY;INTERVAL=1",
+                    "monthly": "FREQ=MONTHLY;INTERVAL=1"
+                }
+                ical = freq_map.get(schedule_frequency.lower(), "FREQ=DAILY;INTERVAL=1")
+                # Append an arbitrary UNTIL date far in the future if missing
+                if "UNTIL" not in ical:
+                    ical += ";UNTIL=20301231T000000"
+                
+                # Dynamic start date: 5 mins from now
+                from datetime import datetime, timedelta, timezone
+                start_dt = datetime.now(timezone.utc) + timedelta(minutes=5)
+                # SFMC schedule dates often require no 'Z' but strict +/- offsets or no offset if timezoneId is 1 (UTC is not strictly timezone 1, Central Time is usually timezoneId 2, but UTC might be 1).
+                # User's example: "startDate": "2024-08-11T06:00:00-04:00"
+                start_date_str = start_dt.strftime("%Y-%m-%dT%H:%M:%S")
+
+                payload["startSource"] = {
+                    "typeId": 1,
+                    "schedule": {
+                        "icalRecur": ical,
+                        "startDate": start_date_str,
+                        "timezoneId": 1
+                    }
+                }
+
+            # If a query_id was provided, stitch it into the Automation as Step 1
+            if query_id:
+                payload["steps"] = [
+                    {
+                        "name": "Step 1",
+                        "activities": [
+                            {
+                                "name": "SQL_Query_Step",
+                                "objectTypeId": 300,  # 300 = SQL Query Activity
+                                "activityObjectId": query_id
+                            }
+                        ]
+                    }
+                ]
 
             response = self._call_sfmc_api(url, method="POST", body=payload)
             logger.info("Created Automation '%s' successfully", name)
