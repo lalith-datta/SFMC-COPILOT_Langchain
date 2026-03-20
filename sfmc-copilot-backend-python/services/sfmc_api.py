@@ -145,8 +145,26 @@ class SfmcApiService:
                     "mustOverride": False,
                 }
 
-                if field_type == "Text":
+                if field_type == "Text" :
                     col["length"] = int(field.get("maxLength", 254))
+
+                if field_type == "EmailAddress" :
+                    col["length"] = 254
+                
+                if field_type == "Phone" :
+                    col["length"] = 50
+
+                if field_type == "Locale" :
+                    col["length"] = 5
+
+                # Handle default value if provided
+                default_val = field.get("defaultValue")
+                if default_val is not None:
+                    # Handle special getdate logic for dates
+                    if field_type == "Date" and str(default_val).strip().lower() in ["current date", "today", "now", "GetDate()"]:
+                        col["defaultValue"] = "GetDate()"
+                    else:
+                        col["defaultValue"] = str(default_val)
 
                 columns.append(col)
 

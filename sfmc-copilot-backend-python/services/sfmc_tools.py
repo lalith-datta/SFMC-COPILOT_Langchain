@@ -33,6 +33,7 @@ def create_data_extension(
             - isPrimaryKey (bool): Whether this field is the primary key
             - isRequired (bool): Whether this field is required
             - maxLength (int, optional): Max length for Text fields (default 254)
+            - defaultValue (str, optional): Default value for the field. For dates representing 'current date', pass "GetDate()"
         category_id: SFMC folder ID where the DE will be created. Use 0 to auto-discover.
         is_sendable: Set to true if the user wants a sendable DE or mentions "send relationship"
         sendable_field_name: The field name to use as the sendable relationship field (e.g. "SubscriberKey")
