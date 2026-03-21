@@ -156,6 +156,10 @@ class SfmcApiService:
 
                 if field_type == "Locale" :
                     col["length"] = 5
+                
+                if field_type == "Decimal" :
+                    col["length"] = int(field.get("precision", 18))
+                    col["scale"] = int(field.get("scale", 2))
 
                 # Handle default value if provided
                 default_val = field.get("defaultValue")
