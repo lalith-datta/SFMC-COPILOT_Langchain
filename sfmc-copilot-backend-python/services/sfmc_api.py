@@ -75,7 +75,7 @@ class SfmcApiService:
         return "Text"
 
     # Default SFMC category (folder) ID for Data Extensions
-    DEFAULT_CATEGORY_ID = 70553
+    DEFAULT_CATEGORY_ID = 866434
 
     # ==================== DATA EXTENSIONS ====================
 
@@ -223,6 +223,7 @@ class SfmcApiService:
 
     # ==================== SQL QUERY ACTIVITIES ====================
     DEFAULT_SQL_QUERY_CATEGORY_ID = 70556
+
     def create_sql_query_activity(
         self, name: str, query_text: str, target_de_key: str, description: str = "", update_type: str = "Overwrite"
     ) -> str:
@@ -259,6 +260,77 @@ class SfmcApiService:
         except Exception as e:
             logger.error("Failed to create SQL Query Activity '%s': %s", name, e)
             return f"❌ Failed to create SQL Query Activity '{name}': {e}"
+
+
+    def create_data_extract_activity(
+        self, name: str, customer_key: str, file_naming_pattern: str, type: str, description: str = "", interval: str = "",
+        start_date: str = "",
+        end_date: str = "",
+    ) -> str:
+        """Create a Data Extract Activity in SFMC."""
+        try:
+            url = f"{self._base_uri()}/automation/v1/dataextracts"
+            update_type_map = {"Data Extension Extract": "bb94a04d-9632-4623-be47-daabc3f588a6", "UTF16 to ASCII Converter": "e7e14f95-b925-462d-b6b4-4a6b1dca7ca1"}
+            interval_map = {"1 day": "1", "7 days": "2", "30 days": "3", "60 days": "5", "90 days": "6"}
+            payload = {
+                "name": name,
+                "key": name.replace(" ", "_"),
+                "description": description,
+                "dataExtractTypeId": update_type_map.get(type),
+                "fileSpec": file_naming_pattern,
+                "extractTypeName": type,
+                "dataFields": [
+                    {
+                        "name": "UsesLineFeed",
+                        "type": "bool",
+                        "value": "True"
+                    }
+                ]
+            }
+
+            if type == "UTF16 to ASCII Converter" and interval:
+                payload["intervalType"] = interval_map.get(interval)
+            if type == "UTF16 to ASCII Converter" and start_date and end_date:
+                payload["startDate"] = start_date
+                payload["endDate"] = end_date
+
+            if type == "Data Extension Extract":
+                payload["dataFields"].extend([
+                    {
+                        "name": "DECustomerKey",
+                        "type": "string",
+                        "value": customer_key
+                    },
+                    {
+                        "name": "HasColumnHeaders",
+                        "type": "bool",
+                        "value": "True"
+                    },
+                    {
+                        "name": "ColumnDelimiter",
+                        "type": "string",
+                        "value": ","
+                    },
+                    {
+                        "name": "TextQualified",
+                        "type": "bool",
+                        "value": "True"
+                    },
+                ])
+            response = self._call_sfmc_api(url, method="POST", body=payload)
+            logger.info("Created Data Extract Activity '%s' successfully", name)
+
+            try:
+                resp_data = json.loads(response)
+                data_extract_id = resp_data.get("dataExtractDefinitionId", "unknown_id")
+                return f"✅ Data Extract Activity '{name}' created successfully!\nData Extract ID: `{data_extract_id}`\n\nDetails:\n{response}"
+            except Exception:
+                return f"✅ Data Extract Activity '{name}' created successfully!\n\nDetails:\n{response}"
+
+        except Exception as e:
+            logger.error("Failed to create Data Extract Activity '%s': %s", name, e)
+            return f"❌ Failed to create Data Extract Activity '{name}': {e}"
+
 
     # ==================== AUTOMATIONS ====================
 

@@ -39,6 +39,7 @@ Your capabilities (via tools):
 - Create Email Definitions in Content Builder
 - Create SQL Query Activities by writing and deploying SQL
 - Create Automations with schedules
+- Create Data Extract Activities
 - Query subscriber count and metrics
 
 Guidelines:

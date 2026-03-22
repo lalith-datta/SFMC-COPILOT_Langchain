@@ -145,6 +145,44 @@ def create_sql_query(
         update_type=update_type,
     )
 
+@tool
+def create_data_extract_activity(
+    name: str,
+    customer_key: str,
+    file_naming_pattern: str,
+    type: str,
+    interval: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    description: str = "",
+    
+) -> str:
+    """Creates an Data Extract Activity in Salesforce Marketing Cloud.
+
+    Use this tool when the user asks to create an Data Extract Activity.
+    
+    Args:
+        name: Name of the query activity (e.g. "Weekly_Active_Users_Query")
+        customer_key: This is the External Key of the Data Extension you want to export
+        file_naming_pattern: The name of the file produced in the Safehouse. It should end in .csv for Data Extension extracts.
+        type: The type of data extract activity. Must be one of "Data Extension Extract" or "UTF16 to ASCII Converter".
+        interval: (Optional) The interval at which the data extract activity should run. Must be one of "1 day", "7 days", "30 days", "60 days", "90 days",.
+        start_date: (Optional) The start date of the data extract activity. Format: MM/DD/YYYY
+        end_date: (Optional) The end date of the data extract activity. Format: MM/DD/YYYY
+        description: Description of what the query does
+    """
+    logger.info("Tool called: create_data_extract_activity(name=%s)", name)
+    return sfmc_api_service.create_data_extract_activity(
+        name=name,
+        customer_key=customer_key,
+        file_naming_pattern=file_naming_pattern,
+        type=type,
+        interval=interval or None,
+        start_date=start_date or None,
+        end_date=end_date or None,
+        description=description,
+    )
+
 
 # All tools to register with the Agent
 ALL_TOOLS = [
@@ -154,4 +192,5 @@ ALL_TOOLS = [
     create_automation,
     get_subscriber_count,
     create_sql_query,
+    create_data_extract_activity,
 ]
