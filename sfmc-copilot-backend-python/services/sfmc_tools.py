@@ -183,6 +183,59 @@ def create_data_extract_activity(
         description=description,
     )
 
+@tool
+def create_file_transfer_activity(
+    name: str,
+    file_naming_pattern: str,
+    file_action: str,
+    file_location: str,
+    encryption_type: str ="",
+    is_unzip: bool =False,
+    decrypt_file: bool =False,
+    public_key: str ="",
+    private_key: str ="",
+    description: str = "",
+    file_age: int = 0,
+    file_offset: int = 0,
+    import_frequency: int = 0,
+    
+) -> str:
+    """Creates an File Transfer Activity in Salesforce Marketing Cloud.
+
+    Use this tool when the user asks to create an File Transfer Activity.
+    
+    Args:
+        name: Name of the file transfer activity.
+        file_naming_pattern: The name of the file produced in the Safehouse. OR naming pattern for the file to be extracted.
+        file_action: The type of file transfer activity. Must be one of "Manage File" or "Move a File From Safehouse".
+        file_location: The Source file location of the file to be extracted or the destination file location for the file to be moved.
+        encryption_type: (Optional) The type of encryption to be used. Must be one of "PGP" or "GPG".
+        is_unzip: (Optional) Whether the file should be unzipped. Must be one of "True" or "False".
+        decrypt_file: (Optional) Whether the file should be decrypted. Must be one of "True" or "False".
+        public_key: (Optional) The public key to be used for encryption.
+        private_key: (Optional) The private key to be used for decryption.
+        description: (Optional) Description of what the file transfer activity does.
+        file_age: (Optional) The age of the file to be extracted. 
+        file_offset: (Optional) The offset of the file to be extracted. 
+        import_frequency: (Optional) The frequency of the file transfer activity. 
+    """
+    logger.info("Tool called: create_file_transfer_activity(name=%s)", name)
+    return sfmc_api_service.create_file_transfer_activity(
+        name=name,
+        file_naming_pattern=file_naming_pattern,
+        file_action=file_action,
+        encryption_type=encryption_type,
+        file_location=file_location,
+        is_unzip=is_unzip,
+        decrypt_file=decrypt_file,
+        public_key=public_key,
+        private_key=private_key,
+        description=description,
+        file_age=file_age,
+        file_offset=file_offset,
+        import_frequency=import_frequency,
+    )
+
 
 # All tools to register with the Agent
 ALL_TOOLS = [
@@ -193,4 +246,5 @@ ALL_TOOLS = [
     get_subscriber_count,
     create_sql_query,
     create_data_extract_activity,
+    create_file_transfer_activity,
 ]

@@ -40,6 +40,7 @@ Your capabilities (via tools):
 - Create SQL Query Activities by writing and deploying SQL
 - Create Automations with schedules
 - Create Data Extract Activities
+- Create File Transfer Activities
 - Query subscriber count and metrics
 
 Guidelines:

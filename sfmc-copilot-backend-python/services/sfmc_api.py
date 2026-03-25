@@ -324,8 +324,8 @@ class SfmcApiService:
                 resp_data = json.loads(response)
                 data_extract_id = resp_data.get("dataExtractDefinitionId", "unknown_id")
                 return f"✅ Data Extract Activity '{name}' created successfully!\nData Extract ID: `{data_extract_id}`\n\nDetails:\n{response}"
-            except Exception:
-                return f"✅ Data Extract Activity '{name}' created successfully!\n\nDetails:\n{response}"
+            except Exception as e:
+                return f"✅ Failed to retreive the Data Extract Activity ID: {e}"
 
         except Exception as e:
             logger.error("Failed to create Data Extract Activity '%s': %s", name, e)
@@ -424,6 +424,96 @@ class SfmcApiService:
         except Exception as e:
             logger.error("Failed to get subscriber count: %s", e)
             return f"❌ Failed to get subscriber count: {e}"
+
+    # ==================== FILE TRANSFER ACTIVITIES ====================
+    def create_file_transfer_activity(
+        self,
+        name: str,
+        file_naming_pattern: str,
+        file_action: str,
+        file_location: str,
+        encryption_type: str ="",
+        is_unzip: bool =False,
+        decrypt_file: bool =False,
+        public_key: str ="",
+        private_key: str ="",
+        description: str = "",
+        file_age: int = 0,
+        file_offset: int = 0,
+        import_frequency: int = 0,
+    ) -> str:
+        """Create a File Transfer Activity in SFMC."""
+        try:
+            url = f"{self._base_uri()}/automation/v1/filetransfers"
+            key_url = f"{self._base_uri()}/automation/v1/publickeys"
+            file_location_url = f"{self._base_uri()}/automation/v1/ftpLocations"
+            response_ftplocations = self._call_sfmc_api(file_location_url, method="GET")
+            file_location_id = ""
+            res_ftplocations = json.loads(response_ftplocations)
+            for ftp_loc in res_ftplocations.get("items", []):
+                logger.info("Checking FTP location: %s", ftp_loc.get("name"))
+                if ftp_loc.get("name") == file_location:
+                    file_location_id = ftp_loc.get("id")
+                    break
+            payload = {
+                "name": name,
+                "customerKey": name.replace(" ", "_"),
+                "description": description,
+                "fileSpec": file_naming_pattern,
+                "fileTransferLocationId": file_location_id,
+            }
+
+            if file_action == "Manage File":
+                payload["isCompressed"] = is_unzip
+                payload["isEncrypted"] = decrypt_file
+                payload["isUpload"] = False
+                payload["maxFileAge"] = file_age
+                payload["maxFileAgeScheduleOffset"] = file_offset
+                payload["maxImportFrequency"] = import_frequency
+            elif file_action == "Move a File From Safehouse":
+                payload["isUpload"] = True
+                payload["isCompressed"] = 0
+                payload["maxFileAge"] = 0
+                payload["maxFileAgeScheduleOffset"] = 0
+                payload["maxImportFrequency"] = 0
+            
+            if decrypt_file:
+                response_decryption = self._call_sfmc_api(key_url, method="GET")
+                res_decryption = json.loads(response_decryption)
+                for res in res_decryption:
+                    if res.get("name") == private_key:
+                        payload["publicKeyManagementId"] = res.get("publicKeyManagementId")
+                        break
+
+            if encryption_type:
+                response_encryption = self._call_sfmc_api(key_url, method="GET")
+                res_encryption = json.loads(response_encryption)
+                for res in res_encryption:
+                    if res.get("name") == public_key:
+                        payload["publicKeyManagementId"] = res.get("publicKeyManagementId")
+                        break
+                payload["isEncrypted"] = True
+                if encryption_type == "PGP":
+                    payload["isPgp"] = True
+                else:
+                    payload["isPgp"] = False
+            else:
+                payload["isEncrypted"] = False
+                payload["isPgp"] = False
+            
+            logger.info("File Transfer Activity payload: %s", payload)
+                
+            response = self._call_sfmc_api(url, method="POST", body=payload)
+            logger.info("Created File Transfer Activity '%s' successfully", name)
+            try:
+                res = json.loads(response)
+                file_trasfer_activity_id = res['id']
+                return f"✅ File Transfer Activity '{name}' created successfully! and here is the ID: {file_trasfer_activity_id}"
+            except Exception as e:
+                return f"✅ Failed to retreive the File Transfer Activity ID: {e}"
+        except Exception as e:
+            logger.error("Failed to create File Transfer Activity '%s': %s", name, e)
+            return f"❌ Failed to create File Transfer Activity '{name}': {e}"
 
 
 # Singleton instance
