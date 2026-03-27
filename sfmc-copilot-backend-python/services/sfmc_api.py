@@ -53,6 +53,10 @@ class SfmcApiService:
 
         if method.upper() == "GET":
             resp = self._client.get(url, headers=headers, params=params)
+        elif method.upper() == "PATCH":
+            json_body = body if isinstance(body, dict) else None
+            content = body.encode() if isinstance(body, str) else None
+            resp = self._client.patch(url, headers=headers, json=json_body, content=content, params=params)
         else:
             json_body = body if isinstance(body, dict) else None
             content = body.encode() if isinstance(body, str) else None
@@ -183,22 +187,22 @@ class SfmcApiService:
             logger.error("Failed to create Data Extension '%s': %s", name, e)
             return f"❌ Failed to create Data Extension '{name}': {e}"
 
-    # ==================== LIST DATA EXTENSIONS ====================
+    # # ==================== LIST DATA EXTENSIONS ====================
 
-    def search_data_extension(self, search_key: str) -> str:
-        """Search for a Data Extension in the SFMC account."""
-        try:
-            url = f"{self._base_uri()}/data/v1/customobjects"
-            logger.info("Calling SFMC list DEs API: %s", url)
-            response = self._call_sfmc_api(url, params={"$pageSize": "1","$page": "1", "$search": search_key})
-            # logger.info("Found Data Extension '%s' successfully", response)
-            # logger.info(type(response))
-            payload = json.loads(response)
-            External_key = payload["items"][0]["key"]
-            return External_key
-        except Exception as e:
-            logger.error("Unable to find Data Extension: %s", e)
-            return f"❌ Unable to find Data Extension: {e}"
+    # def search_data_extension(self, search_key: str) -> str:
+    #     """Search for a Data Extension in the SFMC account."""
+    #     try:
+    #         url = f"{self._base_uri()}/data/v1/customobjects"
+    #         logger.info("Calling SFMC list DEs API: %s", url)
+    #         response = self._call_sfmc_api(url, params={"$pageSize": "1","$page": "1", "$search": search_key})
+    #         # logger.info("Found Data Extension '%s' successfully", response)
+    #         # logger.info(type(response))
+    #         payload = json.loads(response)
+    #         External_key = payload["items"][0]["key"]
+    #         return External_key
+    #     except Exception as e:
+    #         logger.error("Unable to find Data Extension: %s", e)
+    #         return f"❌ Unable to find Data Extension: {e}"
 
     # ==================== EMAIL ====================
 
@@ -225,7 +229,7 @@ class SfmcApiService:
     DEFAULT_SQL_QUERY_CATEGORY_ID = 70556
 
     def create_sql_query_activity(
-        self, name: str, query_text: str, target_de_key: str, description: str = "", update_type: str = "Overwrite"
+        self, name: str, query_text: str, target_data_extension: str, description: str = "", update_type: str = "Overwrite"
     ) -> str:
         """Create an SQL Query Activity in SFMC."""
         try:
@@ -234,6 +238,7 @@ class SfmcApiService:
             # Map update type string to SFMC ID: 0=Append, 1=Update, 2=Overwrite
             update_type_map = {"overwrite": 0, "update": 1, "append": 2}
             update_id = update_type_map.get(update_type.lower(), 0)
+            target_de_key = self._get_data_extension_details(target_data_extension)["key"]
 
             payload = {
                 "name": name,
@@ -263,7 +268,7 @@ class SfmcApiService:
 
 
     def create_data_extract_activity(
-        self, name: str, customer_key: str, file_naming_pattern: str, type: str, description: str = "", interval: str = "",
+        self, name: str, Data_Extension_Name: str, file_naming_pattern: str, type: str, description: str = "", interval: str = "",
         start_date: str = "",
         end_date: str = "",
     ) -> str:
@@ -295,6 +300,7 @@ class SfmcApiService:
                 payload["endDate"] = end_date
 
             if type == "Data Extension Extract":
+                customer_key = self._get_data_extension_details(Data_Extension_Name)["key"]
                 payload["dataFields"].extend([
                     {
                         "name": "DECustomerKey",
@@ -337,30 +343,32 @@ class SfmcApiService:
     def create_automation(
         self, 
         name: str, 
-        description: str, 
+        description: str = "",
         start_source: str = "Scheduled", 
         schedule_frequency: str = "", 
         file_naming_pattern: str = "",
-        query_id: str | None = None
+        matching_type: str = "",
+        folder_location: str = "",
     ) -> str:
-        """Create an automation in SFMC with an optional SQL query step."""
+        """Create an automation in SFMC."""
         try:
             url = f"{self._base_uri()}/automation/v1/automations"
             payload = {
                 "name": name,
                 "description": description,
             }
-
+            matching_type_map = {"Begins with": 2, "Contains": 1, "Ends with": 3}
             if start_source.lower() == "filedrop":
-                payload["type"] = "triggered"
-                # For now, leaving folderLocationId unconfigured per user request. 
-                # SFMC may require it for a fully valid File Drop setup.
-                payload["fileTrigger"] = {
-                    "fileNamingPattern": file_naming_pattern or f"{name}_%%Year%%%%Month%%%%Day%%.csv",
-                    "isPublished": True
+                payload["startSource"] = {
+                    "typeId": 2,
+                    "fileDrop": {
+                        "fileNamePattern": file_naming_pattern,
+                        "fileNamePatternTypeId": matching_type_map.get(matching_type) if file_naming_pattern else 0,
+                        "folderLocation": f"import\\{folder_location}\\",
+                        "queueFiles": True,
+                    }
                 }
             else:
-                # Map simple frequency to iCal Recur string
                 freq_map = {
                     "hourly": "FREQ=HOURLY;INTERVAL=1",
                     "daily": "FREQ=DAILY;INTERVAL=1",
@@ -368,15 +376,11 @@ class SfmcApiService:
                     "monthly": "FREQ=MONTHLY;INTERVAL=1"
                 }
                 ical = freq_map.get(schedule_frequency.lower(), "FREQ=DAILY;INTERVAL=1")
-                # Append an arbitrary UNTIL date far in the future if missing
                 if "UNTIL" not in ical:
                     ical += ";UNTIL=20301231T000000"
                 
-                # Dynamic start date: 5 mins from now
                 from datetime import datetime, timedelta, timezone
                 start_dt = datetime.now(timezone.utc) + timedelta(minutes=5)
-                # SFMC schedule dates often require no 'Z' but strict +/- offsets or no offset if timezoneId is 1 (UTC is not strictly timezone 1, Central Time is usually timezoneId 2, but UTC might be 1).
-                # User's example: "startDate": "2024-08-11T06:00:00-04:00"
                 start_date_str = start_dt.strftime("%Y-%m-%dT%H:%M:%S")
 
                 payload["startSource"] = {
@@ -388,21 +392,6 @@ class SfmcApiService:
                     }
                 }
 
-            # If a query_id was provided, stitch it into the Automation as Step 1
-            if query_id:
-                payload["steps"] = [
-                    {
-                        "name": "Step 1",
-                        "activities": [
-                            {
-                                "name": "SQL_Query_Step",
-                                "objectTypeId": 300,  # 300 = SQL Query Activity
-                                "activityObjectId": query_id
-                            }
-                        ]
-                    }
-                ]
-
             response = self._call_sfmc_api(url, method="POST", body=payload)
             logger.info("Created Automation '%s' successfully", name)
             return f"✅ Automation '{name}' created successfully!\n\n{response}"
@@ -410,6 +399,135 @@ class SfmcApiService:
         except Exception as e:
             logger.error("Failed to create Automation '%s': %s", name, e)
             return f"❌ Failed to create Automation '{name}': {e}"
+
+    # Activity type → SFMC objectTypeId mapping
+    _ACTIVITY_TYPE_MAP: dict[str, int] = {
+        "sql_query": 300,
+        "data_extract": 73,
+        "file_transfer": 53,
+        "import": 43,
+    }
+
+    def add_activity_to_automation(
+        self,
+        automation_name: str,
+        activity_type: str,
+        activity_id: str,
+        step_number: int = 0,
+    ) -> str:
+        """Add an activity to a specific step in an existing SFMC automation."""
+        try:
+            # 1. Resolve objectTypeId
+            object_type_id = self._ACTIVITY_TYPE_MAP.get(activity_type.lower().replace(" ", "_"))
+            if not object_type_id:
+                return f"❌ Unknown activity type '{activity_type}'. Must be one of: {', '.join(self._ACTIVITY_TYPE_MAP.keys())}"
+
+            # 2. Search for the automation by name
+            search_url = f"{self._base_uri()}/automation/v1/automations"
+            search_response = self._call_sfmc_api(
+                search_url, method="GET",
+                params={"$pageSize": "10", "$page": "1", "$orderBy": "name", "$filter": f"name eq '{automation_name}'"}
+            )
+            search_data = json.loads(search_response)
+            items = search_data.get("items", [])
+            automation = None
+            for item in items:
+                if item.get("name") == automation_name:
+                    automation = item
+                    break
+            if not automation:
+                return f"❌ Automation '{automation_name}' not found in SFMC."
+
+            automation_id = automation["id"]
+
+            # 3. Get the full automation details (including current steps)
+            detail_url = f"{self._base_uri()}/automation/v1/automations/{automation_id}"
+            detail_response = self._call_sfmc_api(detail_url, method="GET")
+            automation_detail = json.loads(detail_response)
+            steps = automation_detail.get("steps", [])
+            logger.info(f"Automation details: {automation_detail}")
+
+            if automation_detail["typeId"] == 1:
+                startSource = {
+                    "typeId": automation_detail["typeId"],
+                    "schedule": {
+                        "icalRecur": automation_detail["schedule"]["icalRecur"],
+                        "startDate": automation_detail["schedule"]["startDate"],
+                        "timezoneId": automation_detail["schedule"]["timezoneId"],
+                    },
+                }
+            elif automation_detail["typeId"] == 2:
+                startSource = {
+                    "typeId": automation_detail["typeId"],
+                    "fileDrop": {
+                        "fileNamePattern": automation_detail["fileTrigger"]["fileNamingPattern"] or "",
+                        "fileNamePatternTypeId": 0,
+                        "folderLocation": automation_detail["fileTrigger"]["folderLocationText"],
+                        "queueFiles": automation_detail["fileTrigger"]["queueFiles"] or True,
+                    }
+                }
+
+            payload = {
+                "name": automation_detail["name"],
+                "description": automation_detail["description"],
+                "key": automation_detail["key"],
+                "startSource": startSource,
+                "categoryId": automation_detail["categoryId"],
+            }
+
+            patch_steps = []
+            for step in steps:
+                activities_in_step = []
+                for act in step.get("activities", []):
+                    activities_in_step.append({
+                        "id": act["id"],
+                        "name": act["name"],
+                        "objectTypeId": act["objectTypeId"],
+                        "activityObjectId": act["activityObjectId"],
+                        "displayOrder": act["displayOrder"] - 1,
+                    })
+                patch_steps.append({
+                    "annotation": "",
+                    "stepNumber": step.get("step", 1) - 1,
+                    "activities": activities_in_step,
+                })
+
+
+            # 4. Build the new activity entry
+            new_activity = {
+                "name": f"{activity_type}_activity",
+                "objectTypeId": object_type_id,
+                "activityObjectId": activity_id,
+                
+            }
+
+            # 5. Push new activity into the correct step (1-indexed from user)
+            # new_activity["displayOrder"] = 0
+
+            if step_number > len(patch_steps) and len(patch_steps) > 0:
+                new_activity["displayOrder"] = 0
+                patch_steps.append({"annotation": "", "stepNumber": len(patch_steps), "activities": [new_activity]})
+            elif step_number > 0:
+                new_activity["displayOrder"] = len(patch_steps[step_number - 1].get("activities", []))
+                patch_steps[step_number - 1]["activities"].append(new_activity)
+
+            # 6. PATCH — send the full automation detail with modified steps
+            payload["steps"] = patch_steps
+            logger.info(f"Patch payload: {json.dumps(payload, indent=2)}")
+            self._call_sfmc_api(detail_url, method="PATCH", body=payload)
+
+            logger.info(
+                "Added %s activity (id=%s) to Automation '%s' at Step %d",
+                activity_type, activity_id, automation_name, step_number,
+            )
+            return (
+                f"✅ Successfully added {activity_type} activity to Automation '{automation_name}' at Step {step_number}!\n"
+                f"Activity ID: `{activity_id}`"
+            )
+
+        except Exception as e:
+            logger.error("Failed to add activity to Automation '%s': %s", automation_name, e)
+            return f"❌ Failed to add activity to Automation '{automation_name}': {e}"
 
     # ==================== SUBSCRIBERS ====================
 
@@ -451,7 +569,6 @@ class SfmcApiService:
             file_location_id = ""
             res_ftplocations = json.loads(response_ftplocations)
             for ftp_loc in res_ftplocations.get("items", []):
-                logger.info("Checking FTP location: %s", ftp_loc.get("name"))
                 if ftp_loc.get("name") == file_location:
                     file_location_id = ftp_loc.get("id")
                     break
@@ -470,36 +587,34 @@ class SfmcApiService:
                 payload["maxFileAge"] = file_age
                 payload["maxFileAgeScheduleOffset"] = file_offset
                 payload["maxImportFrequency"] = import_frequency
-            elif file_action == "Move a File From Safehouse":
+
+                if decrypt_file:
+                    response_decryption = self._call_sfmc_api(key_url, method="GET")
+                    res_decryption = json.loads(response_decryption)
+                    for res in res_decryption:
+                        if res.get("name") == private_key:
+                            payload["publicKeyManagementId"] = res.get("publicKeyManagementId")
+                            break
+                
+            if file_action == "Move a File From Safehouse":
                 payload["isUpload"] = True
                 payload["isCompressed"] = 0
                 payload["maxFileAge"] = 0
                 payload["maxFileAgeScheduleOffset"] = 0
                 payload["maxImportFrequency"] = 0
-            
-            if decrypt_file:
-                response_decryption = self._call_sfmc_api(key_url, method="GET")
-                res_decryption = json.loads(response_decryption)
-                for res in res_decryption:
-                    if res.get("name") == private_key:
-                        payload["publicKeyManagementId"] = res.get("publicKeyManagementId")
-                        break
-
-            if encryption_type:
-                response_encryption = self._call_sfmc_api(key_url, method="GET")
-                res_encryption = json.loads(response_encryption)
-                for res in res_encryption:
-                    if res.get("name") == public_key:
-                        payload["publicKeyManagementId"] = res.get("publicKeyManagementId")
-                        break
-                payload["isEncrypted"] = True
-                if encryption_type == "PGP":
-                    payload["isPgp"] = True
-                else:
-                    payload["isPgp"] = False
-            else:
                 payload["isEncrypted"] = False
                 payload["isPgp"] = False
+
+                if encryption_type:
+                    response_encryption = self._call_sfmc_api(key_url, method="GET")
+                    res_encryption = json.loads(response_encryption)
+                    for res in res_encryption:
+                        if res.get("name") == public_key:
+                            payload["publicKeyManagementId"] = res.get("publicKeyManagementId")
+                            break
+                    payload["isEncrypted"] = True
+                    if encryption_type == "PGP":
+                        payload["isPgp"] = True
             
             logger.info("File Transfer Activity payload: %s", payload)
                 
@@ -514,6 +629,124 @@ class SfmcApiService:
         except Exception as e:
             logger.error("Failed to create File Transfer Activity '%s': %s", name, e)
             return f"❌ Failed to create File Transfer Activity '{name}': {e}"
+
+    # ==================== HELPERS ====================
+
+    def _get_data_extension_details(self, name: str) -> dict:
+        """Look up a Data Extension by name and return its id, key, and name.
+
+        Uses the /data/v1/customobjects search API.
+        Returns: {"id": "...", "key": "...", "name": "..."} or raises RuntimeError.
+        """
+        url = f"{self._base_uri()}/data/v1/customobjects"
+        response = self._call_sfmc_api(url, params={"$pageSize": "1", "$page": "1", "$search": name})
+        payload = json.loads(response)
+        items = payload.get("items", [])
+        for item in items:
+            if item.get("name") == name:
+                return {"id": item["id"], "key": item["key"], "name": item.get("name", name)}
+        raise RuntimeError(f"Data Extension '{name}' not found in SFMC")
+
+    # ==================== IMPORT ACTIVITIES ====================
+
+    def create_import_activity(
+        self,
+        name: str,
+        source_data_extension_name: str,
+        destination_data_extension_name: str,
+        data_source_type: str = "DataExtension",
+        update_type: str = "Overwrite",
+        file_location_name: str = "",
+        file_naming_pattern: str = "",
+        file_type: str = "CSV",
+        description: str = "",
+        allow_errors: bool = True,
+        send_email_notification: bool = False,
+        notification_email_address: str = "",
+    ) -> str:
+        """Create an Import Activity (Data Copy) in SFMC."""
+        try:
+            url = f"{self._base_uri()}/automation/v1/imports"
+
+            # Resolve update type
+            update_type_map = {"add only": 1, "update only": 2, "add and update": 0, "overwrite": 4}
+            update_type_id = update_type_map.get(update_type.lower(), 4)
+
+            # Look up source and destination DE details
+            source_de = self._get_data_extension_details(source_data_extension_name)
+            destination_de = self._get_data_extension_details(destination_data_extension_name)
+
+            logger.info(
+                "Import: source DE '%s' (id=%s), destination DE '%s' (id=%s)",
+                source_data_extension_name, source_de["id"],
+                destination_data_extension_name, destination_de["id"],
+            )
+
+            # Common payload fields
+            payload: dict = {
+                "name": name,
+                "customerKey": name.replace(" ", "_"),
+                "description": description,
+                "destinationObjectTypeId": 310,
+                "destinationObjectId": destination_de["id"],
+                "subscriberImportTypeId": 255,
+                "updateTypeId": update_type_id,
+                "fieldMappingType": "InferFromColumnHeadings",
+                "fieldMappings": [],
+                "isSequential": True,
+                "allowErrors": allow_errors,
+                "hasColumnHeader": True,
+                "isOrderedImport": True,
+                "sendEmailNotification": send_email_notification,
+                "notificationEmailAddress": notification_email_address,
+                "blankFileProcessingType": 0,
+                "sourceCustomObjectId": source_de["id"],
+                "sourceDataExtensionName": source_data_extension_name,
+                "destinationName": destination_data_extension_name,
+            }
+
+            if data_source_type.lower() == "filelocation":
+                # Resolve FTP location ID
+                ftp_url = f"{self._base_uri()}/automation/v1/ftpLocations"
+                response_ftp = self._call_sfmc_api(ftp_url, method="GET")
+                res_ftp = json.loads(response_ftp)
+                file_location_id = ""
+                for ftp_loc in res_ftp.get("items", []):
+                    if ftp_loc.get("name") == file_location_name:
+                        file_location_id = ftp_loc.get("id")
+                        break
+                if not file_location_id:
+                    return f"❌ File location '{file_location_name}' not found in SFMC FTP locations."
+
+                payload["fileTransferLocationId"] = file_location_id
+                payload["fileNamingPattern"] = file_naming_pattern
+                payload["fileType"] = file_type
+                payload["maxImportFrequencyHours"] = 0
+                payload["maxFileAgeHours"] = 0
+                payload["maxFileAgeScheduleOffsetHours"] = 0
+                payload["standardQuotedStrings"] = True
+                payload["dateFormatLocale"] = "en-US"
+                payload["deleteFile"] = False
+                payload["fileSpec"] = None
+            else:
+                # Data Extension source — fileSpec is _CustomObject
+                payload["fileSpec"] = "_CustomObject"
+                payload["destinationId"] = None
+
+            logger.info("Import Activity payload: %s", payload)
+            response = self._call_sfmc_api(url, method="POST", body=payload)
+            logger.info("Created Import Activity '%s' successfully", name)
+
+            try:
+                resp_data = json.loads(response)
+                import_id = resp_data.get("importDefinitionId", "unknown_id")
+                return f"✅ Import Activity '{name}' created successfully!\nImport Definition ID: `{import_id}`\n\nDetails:\n{response}"
+            except Exception:
+                return f"✅ Import Activity '{name}' created successfully!\n\nDetails:\n{response}"
+
+        except Exception as e:
+            logger.error("Failed to create Import Activity '%s': %s", name, e)
+            return f"❌ Failed to create Import Activity '{name}': {e}"
 
 
 # Singleton instance
