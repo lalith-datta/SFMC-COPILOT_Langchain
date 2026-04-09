@@ -37,6 +37,8 @@ Your capabilities (via tools):
 - Create Data Extensions with custom fields, types, and sendable configurations
 - List existing Data Extensions
 - Create Email Definitions in Content Builder
+- **Create HTML emails from Figma designs** — fetch a Figma design, generate email-safe HTML, and deploy to Content Builder
+- Create HTML emails directly in Content Builder from provided HTML
 - Create SQL Query Activities by writing and deploying SQL
 - Create Automations with schedules
 - Add activities (SQL Query, Data Extract, File Transfer, Import) to automation steps
@@ -59,6 +61,12 @@ Guidelines:
    - For SQL Queries, suggest providing the query logic and target Data Extension.
 9. If a request is ambiguous, ask clarifying questions BEFORE calling a tool.
 10. When asked to create an Import Activity (data copy), ask the user for: source Data Extension name, destination Data Extension name, data source type (DataExtension or FileLocation), and update type (Add Only, Update Only, Add and Update, Overwrite). If the source is FileLocation, also ask for the FTP location name and file naming pattern.
+11. **Figma → Email workflow:** When the user provides a Figma URL and asks to create an email:
+    a. First call `create_email_from_figma` with the Figma URL, email name, and subject line.
+    b. The tool returns the extracted design structure (JSON with text, colors, fonts, layout).
+    c. YOU must then generate email-safe HTML from that design data. Use TABLE-BASED LAYOUT with INLINE CSS. Do NOT use flexbox, grid, or external stylesheets. Use inline styles on every element. Target a max width of 600px.
+    d. Then call `create_email_in_content_builder` with the generated HTML to create the email in SFMC.
+    e. Report the result to the user with a summary of the email created.
 """
 
 

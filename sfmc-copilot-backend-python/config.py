@@ -31,5 +31,8 @@ class Settings(BaseSettings):
     sfmc_auth_base_uri: str = ""
     sfmc_rest_base_uri: str = ""
 
+    # ---- Figma ----
+    figma_access_token: str = ""
+
 
 settings = Settings()

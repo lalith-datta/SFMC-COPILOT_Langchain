@@ -330,6 +330,119 @@ def create_import_activity(
     )
 
 
+@tool
+def create_email_from_figma(
+    figma_url: str,
+    email_name: str,
+    subject_line: str,
+    preheader: str = "",
+) -> str:
+    """Creates an HTML email in SFMC Content Builder from a Figma design.
+
+    Use this tool when the user provides a Figma URL and asks to create an email
+    from that design. This tool will:
+    1. Fetch the design from Figma
+    2. Extract the layout, text, colors, and images
+    3. Generate email-safe HTML/CSS from the design
+    4. Create the email in SFMC Content Builder
+
+    Args:
+        figma_url: The full Figma file URL (e.g. "https://www.figma.com/design/ABC123/EmailTemplate")
+        email_name: Name for the email in SFMC (e.g. "Welcome_Email_V2")
+        subject_line: The email subject line
+        preheader: (Optional) Preview text shown in inbox before opening the email
+    """
+    from services.figma_api import figma_api_service
+    import json
+
+    logger.info(
+        "Tool called: create_email_from_figma(url=%s, name=%s)", figma_url, email_name
+    )
+
+    try:
+        # Step 1: Fetch and extract design from Figma
+        logger.info("Step 1: Fetching design from Figma...")
+        design_data = figma_api_service.fetch_design_for_email(figma_url)
+        structure = design_data["structure"]
+        file_key = design_data["file_key"]
+        image_node_ids = design_data.get("image_node_ids", [])
+
+        # Step 2: Export any images from the design
+        image_urls = {}
+        if image_node_ids:
+            logger.info("Step 2: Exporting %d images from Figma...", len(image_node_ids))
+            try:
+                image_urls = figma_api_service.get_images(
+                    file_key, image_node_ids, fmt="png", scale=2
+                )
+            except Exception as img_err:
+                logger.warning("Image export failed (non-fatal): %s", img_err)
+
+        # Step 3: Prepare the design summary for Gemini
+        design_summary = json.dumps(structure, indent=2, default=str)
+
+        # Add image URLs to the context if available
+        image_context = ""
+        if image_urls:
+            image_context = "\n\nExported Image URLs:\n"
+            for node_id, url in image_urls.items():
+                image_context += f"- Node {node_id}: {url}\n"
+
+        # Step 4: Use Gemini to generate email HTML
+        # (The agent itself is Gemini — we return the design data so the agent
+        #  can generate the HTML in its next reasoning step)
+        logger.info("Step 3: Design extracted successfully. Returning design data for HTML generation.")
+
+        return (
+            f"✅ Figma design fetched and analyzed successfully!\n\n"
+            f"**Design Structure (JSON):**\n```json\n{design_summary}\n```\n"
+            f"{image_context}\n\n"
+            f"---\n"
+            f"Now please generate email-safe HTML from this design data. "
+            f"The HTML must use TABLE-BASED LAYOUT with INLINE CSS for email client compatibility. "
+            f"Use the text content, colors, fonts, and layout from the design structure above. "
+            f"Once the HTML is generated, call the `create_email_in_content_builder` tool with:\n"
+            f"- email_name: {email_name}\n"
+            f"- subject_line: {subject_line}\n"
+            f"- preheader: {preheader}\n"
+            f"- The generated HTML content"
+        )
+
+    except ValueError as ve:
+        logger.error("Invalid Figma URL: %s", ve)
+        return f"❌ Invalid Figma URL: {ve}"
+    except Exception as e:
+        logger.error("Failed to fetch Figma design: %s", e, exc_info=True)
+        return f"❌ Failed to fetch design from Figma: {e}"
+
+
+@tool
+def create_email_in_content_builder(
+    email_name: str,
+    subject_line: str,
+    html_content: str,
+    preheader: str = "",
+) -> str:
+    """Creates an HTML email in SFMC Content Builder with provided HTML content.
+
+    Use this tool to create an email in Content Builder after you have generated
+    the email HTML (e.g., from a Figma design or from user-provided HTML).
+
+    Args:
+        email_name: Name for the email asset in SFMC Content Builder
+        subject_line: The email subject line
+        html_content: The complete HTML content for the email (must be a full HTML document)
+        preheader: (Optional) Preview text shown in inbox before opening the email
+    """
+    logger.info("Tool called: create_email_in_content_builder(name=%s)", email_name)
+    return sfmc_api_service.create_email_from_html(
+        name=email_name,
+        subject=subject_line,
+        html_content=html_content,
+        preheader=preheader,
+    )
+
+
 # All tools to register with the Agent
 ALL_TOOLS = [
     create_data_extension,
@@ -342,4 +455,7 @@ ALL_TOOLS = [
     create_data_extract_activity,
     create_file_transfer_activity,
     create_import_activity,
+    create_email_from_figma,
+    create_email_in_content_builder,
 ]
+

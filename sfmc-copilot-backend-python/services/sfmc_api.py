@@ -225,6 +225,60 @@ class SfmcApiService:
             logger.error("Failed to create Email Definition '%s': %s", name, e)
             return f"❌ Failed to create Email Definition '{name}': {e}"
 
+    def create_email_from_html(
+        self,
+        name: str,
+        subject: str,
+        html_content: str,
+        preheader: str = "",
+    ) -> str:
+        """Create an HTML email asset in SFMC Content Builder.
+
+        Uses the Asset API (POST /asset/v1/content/assets) with
+        assetType 208 (htmlemail).
+        """
+        try:
+            url = f"{self._base_uri()}/asset/v1/content/assets"
+            payload: dict = {
+                "name": name,
+                "customerKey": name.replace(" ", "_"),
+                "assetType": {
+                    "name": "htmlemail",
+                    "id": 208,
+                },
+                "views": {
+                    "html": {
+                        "content": html_content,
+                    },
+                    "subjectline": {
+                        "content": subject,
+                    },
+                },
+            }
+
+            if preheader:
+                payload["views"]["preheader"] = {"content": preheader}
+
+            logger.info("Creating HTML email asset '%s' in Content Builder", name)
+            response = self._call_sfmc_api(url, method="POST", body=payload)
+            logger.info("Created HTML email '%s' successfully", name)
+
+            try:
+                resp_data = json.loads(response)
+                asset_id = resp_data.get("id", "unknown")
+                return (
+                    f"✅ HTML Email '{name}' created successfully in Content Builder!\n"
+                    f"Asset ID: `{asset_id}`\n"
+                    f"**Subject:** {subject}\n\n"
+                    f"Details:\n{response}"
+                )
+            except Exception:
+                return f"✅ HTML Email '{name}' created successfully in Content Builder!\n\nDetails:\n{response}"
+
+        except Exception as e:
+            logger.error("Failed to create HTML email '%s': %s", name, e)
+            return f"❌ Failed to create HTML email '{name}': {e}"
+
     # ==================== SQL QUERY ACTIVITIES ====================
     DEFAULT_SQL_QUERY_CATEGORY_ID = 70556
 
